@@ -41,25 +41,130 @@ ADK automatically handles:
 ## Architecture Overview
 
 ```
- ┌────────────────────────────────────────────────────────┐
- │ 1. End User in Gemini Enterprise Web Chat              │
- │    "What idle resources can we clean up in prod?"     │
- └───────────────────────────┬────────────────────────────┘
-                             │
-                             ▼ Native ADK Invocation (:streamQuery)
- ┌────────────────────────────────────────────────────────┐
- │ 2. Agent Runtime (Gemini Enterprise Agent Platform)    │
- │    - Native ADK root_agent                             │
- │    - Auto-cataloged in Google Cloud Agent Registry     │
- │    - skills/recommender/SKILL.md (Instructions)        │
- │    - Native McpToolset (Zero custom client code)       │
- └───────────────────────────┬────────────────────────────┘
-                             │
-                             ▼ JSON-RPC over HTTPS (OAuth2 Bearer token)
- ┌────────────────────────────────────────────────────────┐
- │ 3. Google-Managed Remote MCP Server                    │
- │    https://recommender.googleapis.com/mcp              │
- └────────────────────────────────────────────────────────┘
+ ┌────────────────────────────────────────────────────────────────────────┐
+ │ 1. End User in Gemini Enterprise Web Chat                              │
+ │    "What idle persistent disks can we clean up in project my-gcp-proj?"│
+ └───────────────────────────────────┬────────────────────────────────────┘
+                                     │
+                                     ▼ (1) Authenticated RPC (:streamQuery)
+ ┌────────────────────────────────────────────────────────────────────────┐
+ │ 2. Vertex AI Agent Runtime (Reasoning Engine Gateway)                  │
+ │    - Routes HTTP POST to container: /api/stream_reasoning_engine       │
+ │    - Manages serverless container lifecycle & session binding          │
+ └───────────────────────────────────┬────────────────────────────────────┘
+                                     │
+                                     ▼ (2) HTTP POST with unwrapped JSON payload
+ ┌────────────────────────────────────────────────────────────────────────┐
+ │ 3. Hosted ADK Container (gcp_agent/agent.py)                           │
+ │    - Endpoint /api/stream_reasoning_engine parses Gemini Enterprise req│
+ │    - ADK Runner invokes root_agent with skills/recommender/SKILL.md    │
+ │    - Gemini 2.5 Flash decides to call list_recommendations tool        │
+ │    - McpToolset calls get_auth_headers() for fresh OAuth2 ADC token    │
+ └───────────────────────────────────┬────────────────────────────────────┘
+                                     │
+                                     ▼ (3) JSON-RPC over HTTPS (OAuth2 Bearer token)
+ ┌────────────────────────────────────────────────────────────────────────┐
+ │ 4. Google-Managed Remote MCP Server                                    │
+ │    https://recommender.googleapis.com/mcp                              │
+ │    - Authorizes caller via IAM (roles/mcp.toolUser)                    │
+ │    - Executes query against Google Cloud Recommender API               │
+ │    - Returns live resource recommendations                             │
+ └───────────────────────────────────┬────────────────────────────────────┘
+                                     │
+                                     ▼ (4) Streaming JSON chunks back to UI
+ ┌────────────────────────────────────────────────────────────────────────┐
+ │ 5. Streaming Event Yielding to Gemini Enterprise                       │
+ │    - agent.py yields {"events": [...], "session_id": ..., "artifacts": []}
+ │    - Gemini Enterprise streams formatted table & actions in real time  │
+ └────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Deep Dive: `gcp_agent/agent.py` & Hosted Endpoints
+
+The container serves three critical functions: defining the ADK agent, handling remote authentication, and exposing the **Vertex AI Reasoning Engine** HTTP contracts required by Agent Runtime and Gemini Enterprise.
+
+### 1. Dynamic Authentication (`get_auth_headers`)
+Google Cloud OAuth2 access tokens expire after 3,600 seconds (1 hour). Hardcoding tokens causes agents to fail silently in production.
+- `get_auth_headers()` is supplied as a callable to `McpToolset(header_provider=get_auth_headers)`.
+- ADK executes this callback **dynamically before every remote tool call**, checking validity and calling `credentials.refresh()` if needed.
+- In addition to `Authorization: Bearer <token>`, it injects `X-Goog-User-Project` when running with user-level Application Default Credentials (ADC), ensuring Google Cloud quota and billing are properly resolved.
+
+### 2. Mandatory Health Probes (`GET /`, `/health`, `/healthz`)
+- Google Cloud Agent Runtime and Cloud Run infrastructure periodically send HTTP `GET` requests to verify container responsiveness.
+- Returning `{"status": "ok", "agent": "..."}` ensures the container passes readiness/liveness checks and prevents premature container restarts.
+
+### 3. Synchronous Operations (`POST /api/reasoning_engine`)
+- Implements the Vertex AI Reasoning Engine contract for session lifecycle methods:
+  - `create_session` / `async_create_session`: Creates an isolated session in the session service.
+  - `get_session` / `async_get_session`: Retrieves active session metadata.
+  - `list_sessions` / `async_list_sessions`: Lists all existing sessions for a user.
+  - `delete_session` / `async_delete_session`: Cleans up session state.
+  - Synchronous query fallback: Returns `{"output": "..."}` with the final agent response.
+
+### 4. Streaming Event Engine (`POST /api/stream_reasoning_engine`)
+- This is the **primary production endpoint** invoked when a user chats in Gemini Enterprise or the Vertex AI Console Playground.
+- **Payload Unwrapping (`_parse_reasoning_engine_input`)**:
+  - Gemini Enterprise sends a `streaming_agent_run_with_events` RPC where user input is nested inside a JSON string field named `request_json`.
+  - Vertex AI Playground sends standard `stream_query` with an `input` dict.
+  - `_parse_reasoning_engine_input()` seamlessly normalizes both shapes, extracts `user_id`, `session_id`, and builds an ADK-native `types.Content` object.
+- **Streaming Chunks Generator (`event_generator`)**:
+  - Executes `runner.run_async()`.
+  - Converts ADK events into the JSON chunk contract expected by Gemini Enterprise:
+    ```json
+    {"events": [{"content": {"parts": [{"text": "..."}], "role": "agent"}, "author": "agent"}], "session_id": "sess_123", "artifacts": []}
+    ```
+  - Emitting these streaming chunks prevents stream timeout and eliminates the error: `Reasoning Engine stream closed cleanly without producing any events`.
+
+---
+
+## End-to-End Request Lifecycle & Architecture Trace
+
+When an enterprise user asks a question in Gemini Enterprise, here is the complete 12-step journey of the request:
+
+```
+[User Chat Prompt]
+       │
+       ▼
+ 1. User asks: "What idle persistent disks can we clean up in project my-gcp-project in zone us-central1-a?"
+       │
+       ▼
+ 2. Gemini Enterprise Orchestrator (Discovery Engine) identifies the GCP Recommender Agent in Agent Registry.
+       │
+       ▼
+ 3. Gemini Enterprise calls Reasoning Engine streamQuery RPC:
+    Method: streaming_agent_run_with_events
+    Body: {"class_method": "streaming_agent_run_with_events", "input": {"request_json": "{\"message\": \"...\"}"}}
+       │
+       ▼
+ 4. Vertex AI Agent Runtime routes HTTP POST to container: /api/stream_reasoning_engine
+       │
+       ▼
+ 5. FastAPI handler (_parse_reasoning_engine_input) unwraps request_json and builds types.Content object.
+       │
+       ▼
+ 6. ADK Runner (runner.run_async) passes the prompt and SKILL.md instructions to Gemini 2.5 Flash.
+       │
+       ▼
+ 7. Gemini 2.5 Flash decides to invoke the remote tool:
+    FunctionCall: list_recommendations(parent="projects/my-gcp-project/locations/us-central1-a/recommenders/google.compute.disk.IdleResourceRecommender")
+       │
+       ▼
+ 8. ADK McpToolset calls get_auth_headers() to obtain fresh OAuth2 Bearer token with X-Goog-User-Project.
+       │
+       ▼
+ 9. ADK McpToolset sends HTTPS JSON-RPC request (tools/call) to:
+    https://recommender.googleapis.com/mcp
+       │
+       ▼
+10. Google Remote MCP Server authenticates IAM permissions (roles/mcp.toolUser) and queries Google Cloud Recommender API.
+       │
+       ▼
+11. Gemini 2.5 Flash receives raw JSON recommendations, calculates monthly/annual savings, formats an executive Markdown table, and produces actionable gcloud cleanup commands.
+       │
+       ▼
+12. agent.py yields streaming event chunks ({"events": [...], "session_id": ..., "artifacts": []}\n) back through Agent Runtime to the Gemini Enterprise Chat UI in real time.
 ```
 
 ---
@@ -102,7 +207,32 @@ uv tool install google-agents-cli
 agents-cli info
 ```
 
-### 2. Set Up Python Virtual Environment
+### 2. Scaffold or Bootstrap the Project with `agents-cli`
+
+If starting a new agent from scratch, you can scaffold it in one command using `agents-cli scaffold create`:
+
+```bash
+# Scaffold an ADK Agent targeting Vertex AI Agent Runtime in rapid-prototype mode
+agents-cli scaffold create gcp-recommender-agent \
+  --agent adk \
+  --deployment-target agent_runtime \
+  --region us-central1 \
+  --prototype
+```
+
+Key scaffolding flags:
+- `--agent adk`: Targets the official Google Agent Development Kit framework template.
+- `--deployment-target agent_runtime`: Configures serverless hosting on Vertex AI Agent Runtime (Reasoning Engine).
+- `--prototype`: Enables rapid iteration on agent instructions and tools before generating CI/CD pipelines.
+
+To add deployment configuration to an existing project at any time:
+```bash
+agents-cli scaffold enhance . --deployment-target agent_runtime
+```
+
+The scaffolding metadata is stored in `agents-cli-manifest.yaml`, allowing subsequent CLI commands (`deploy`, `publish`, `run`) to execute seamlessly without redundant parameters.
+
+### 3. Set Up Python Virtual Environment
 ```bash
 # Verify Python version (3.10+)
 python3 --version
@@ -116,7 +246,7 @@ pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-### 3. Configure Google Cloud Project & Enable APIs
+### 4. Configure Google Cloud Project & Enable APIs
 ```bash
 export GOOGLE_CLOUD_PROJECT="your-project-id"
 export GOOGLE_CLOUD_LOCATION="us-central1"
@@ -133,7 +263,7 @@ gcloud services enable \
   --project="$GOOGLE_CLOUD_PROJECT"
 ```
 
-### 4. Test Locally (No Cloud Deployment)
+### 5. Test Locally (No Cloud Deployment)
 
 #### Test A: Verify Remote MCP Tool Discovery
 ```bash
@@ -161,7 +291,7 @@ adk web --port 8085 gcp_agent
 
 ---
 
-### 5. Deploy to Agent Runtime & Publish to Gemini Enterprise
+### 6. Deploy to Agent Runtime & Publish to Gemini Enterprise
 
 #### Automated Deployment via Script
 ```bash
