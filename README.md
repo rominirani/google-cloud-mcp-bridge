@@ -92,7 +92,7 @@ Google Cloud OAuth2 access tokens expire after 3,600 seconds (1 hour). Hardcodin
 - In addition to `Authorization: Bearer <token>`, it injects `X-Goog-User-Project` when running with user-level Application Default Credentials (ADC), ensuring Google Cloud quota and billing are properly resolved.
 
 ### 2. Mandatory Health Probes (`GET /`, `/health`, `/healthz`)
-- Google Cloud Agent Runtime and Cloud Run infrastructure periodically send HTTP `GET` requests to verify container responsiveness.
+- Google Cloud Agent Runtime infrastructure periodically sends HTTP `GET` requests to verify container responsiveness.
 - Returning `{"status": "ok", "agent": "..."}` ensures the container passes readiness/liveness checks and prevents premature container restarts.
 
 ### 3. Synchronous Operations (`POST /api/reasoning_engine`)
@@ -180,7 +180,7 @@ google-cloud-mcp-bridge/
 ├── skills/
 │   └── recommender/
 │       └── SKILL.md      # Skill instructions for cost and idle resource analysis
-├── Dockerfile            # Container image build for Agent Runtime / Cloud Run
+├── Dockerfile            # Container image build for Agent Runtime
 ├── requirements.txt      # Python dependencies (google-adk[mcp,gcp])
 ├── test_client.py        # Local script to verify ADK McpToolset discovery
 ├── test_chat.py          # Local script to run conversational prompts via ADK Runner
