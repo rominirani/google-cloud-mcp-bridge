@@ -8,6 +8,6 @@ create_params:
   deployment_target: "agent_runtime"
   session_type: "none"
   cicd_runner: "skip"
-  is_a2a: true
+  is_a2a: false
   agent_gateway: false
   agent_guidance_filename: "GEMINI.md"

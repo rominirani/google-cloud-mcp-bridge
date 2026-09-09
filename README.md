@@ -70,13 +70,13 @@ ADK automatically handles:
 google-cloud-mcp-bridge/
 ├── gcp_agent/            # ADK Agent package (valid Python module for ADK loader)
 │   ├── __init__.py       # Exports root_agent for ADK loader
-│   └── agent.py          # Native ADK Agent using McpToolset + A2A endpoint
+│   └── agent.py          # Native ADK Agent using McpToolset + Reasoning Engine routes
 ├── agent.py              # Root wrapper re-exporting from gcp_agent
 ├── skills/
 │   └── recommender/
 │       └── SKILL.md      # Skill instructions for cost and idle resource analysis
 ├── Dockerfile            # Container image build for Agent Runtime / Cloud Run
-├── requirements.txt      # Python dependencies (google-adk[mcp,gcp,a2a])
+├── requirements.txt      # Python dependencies (google-adk[mcp,gcp])
 ├── test_client.py        # Local script to verify ADK McpToolset discovery
 ├── test_chat.py          # Local script to run conversational prompts via ADK Runner
 ├── deploy.sh             # Script to deploy to Agent Runtime and publish via agents-cli

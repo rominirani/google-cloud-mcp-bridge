@@ -99,8 +99,8 @@ root_agent = Agent(
     ],
 )
 
-# FastAPI wrapper for Cloud Run and Gemini Enterprise A2A protocol
-app = FastAPI(title=f"GCP {SERVICE_NAME.capitalize()} ADK Agent")
+# FastAPI application serving Agent Runtime and health probes
+app = FastAPI(title=f"GCP {SERVICE_NAME.capitalize()} Reasoning Engine")
 
 session_service = InMemorySessionService()
 runner = Runner(agent=root_agent, app_name="gcp_agent", session_service=session_service)
@@ -111,62 +111,6 @@ runner = Runner(agent=root_agent, app_name="gcp_agent", session_service=session_
 @app.get("/healthz")
 async def health_check():
     return {"status": "ok", "agent": root_agent.name}
-
-
-@app.get("/.well-known/agent-card.json")
-@app.get("/a2a/gcp_agent/.well-known/agent-card.json")
-async def get_agent_card(request: FastAPIRequest):
-    base_url = str(request.base_url).rstrip("/")
-    return {
-        "name": f"GCP {SERVICE_NAME.capitalize()} Agent",
-        "description": f"Audits Google Cloud resources using Google's remote {SERVICE_NAME} MCP server.",
-        "version": "1.0.0",
-        "protocolVersion": "1.0",
-        "endpoints": {"a2a": f"{base_url}/a2a"},
-        "capabilities": {"skills": [SERVICE_NAME]},
-    }
-
-
-@app.post("/a2a")
-@app.post("/a2a/gcp_agent")
-async def handle_a2a_invoke(payload: Dict[str, Any]):
-    method = payload.get("method")
-    if method == "agent/invoke":
-        params = payload.get("params", {})
-        user_message = params.get("message", {}).get("text", "")
-        session_id = params.get("session_id", "default_session")
-        user_id = params.get("user_id", "enterprise_user")
-
-        try:
-            await session_service.create_session(
-                app_name="gcp_agent", user_id=user_id, session_id=session_id
-            )
-        except Exception:
-            pass
-
-        agent_response_text = ""
-        async for event in runner.run_async(
-            user_id=user_id,
-            session_id=session_id,
-            new_message=types.Content(
-                role="user", parts=[types.Part.from_text(text=user_message)]
-            ),
-        ):
-            if event.is_final_response():
-                if event.content and event.content.parts:
-                    agent_response_text = event.content.parts[0].text
-
-        return {
-            "jsonrpc": "2.0",
-            "id": payload.get("id"),
-            "result": {"message": {"role": "agent", "text": agent_response_text}},
-        }
-
-    return {
-        "jsonrpc": "2.0",
-        "id": payload.get("id"),
-        "error": {"code": -32601, "message": f"Method '{method}' not supported"},
-    }
 
 
 def _parse_reasoning_engine_input(body: Dict[str, Any]):
