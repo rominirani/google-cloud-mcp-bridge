@@ -8,7 +8,7 @@ Usage:
 """
 
 import asyncio
-from agent import root_agent
+from gcp_agent.agent import root_agent
 
 
 async def main():
@@ -32,7 +32,7 @@ async def main():
             print(f"     Description: {desc[:100]}..." if len(desc) > 100 else f"     Description: {desc}")
     except Exception as e:
         print(f"  [FAILED] Error discovering tools: {e}")
-        print("\nTroubleshooting:")
+        print("\nPrerequisites check:")
         print("1. Run 'gcloud auth application-default login' to refresh local credentials.")
         print("2. Ensure your GCP identity has 'roles/mcp.toolUser' and 'roles/recommender.viewer'.")
         return

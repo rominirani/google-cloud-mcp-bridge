@@ -16,7 +16,6 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application source code
-COPY agent.py ./
 COPY gcp_agent/ ./gcp_agent/
 COPY skills/ ./skills/
 
@@ -24,8 +23,8 @@ COPY skills/ ./skills/
 RUN chown -R appuser:appuser /app
 USER appuser
 
-# Expose HTTP port for Cloud Run
+# Expose HTTP port for Agent Runtime container
 EXPOSE 8080
 
 # Launch FastAPI using Uvicorn
-CMD ["uvicorn", "agent:app", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["uvicorn", "gcp_agent.agent:app", "--host", "0.0.0.0", "--port", "8080"]

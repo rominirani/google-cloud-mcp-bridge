@@ -20,7 +20,7 @@ import sys
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
-from agent import root_agent
+from gcp_agent.agent import root_agent
 
 
 async def main():
@@ -64,7 +64,7 @@ async def main():
                     print("\n[INFO] Response completed with no content.")
     except Exception as e:
         print(f"\n[ERROR] Runner execution failed: {e}")
-        print("\nTroubleshooting:")
+        print("\nPrerequisites check:")
         print("1. For Vertex AI: export GOOGLE_GENAI_USE_VERTEXAI=true and GOOGLE_CLOUD_PROJECT=your-project-id")
         print("2. For Gemini API: export GEMINI_API_KEY=your-api-key")
         print("3. Ensure 'gcloud auth application-default login' is active.")
