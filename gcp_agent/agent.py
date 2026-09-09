@@ -6,6 +6,7 @@ No custom JSON-RPC client code is needed.
 """
 
 import json
+import logging
 import os
 import time
 from typing import Any, Dict
@@ -19,6 +20,8 @@ from google.adk.tools.mcp_tool.mcp_session_manager import StreamableHTTPConnecti
 import google.auth
 from google.auth.transport.requests import Request as GoogleAuthRequest
 from google.genai import types
+
+logger = logging.getLogger(__name__)
 
 # Catalog of Google Cloud remote MCP server endpoints
 # Reference: https://docs.cloud.google.com/mcp/supported-products
@@ -166,6 +169,57 @@ async def handle_a2a_invoke(payload: Dict[str, Any]):
     }
 
 
+def _parse_reasoning_engine_input(body: Dict[str, Any]):
+    """Extract (class_method, kwargs, user_id, session_id, content, is_gemini_enterprise) from Reasoning Engine payload."""
+    class_method = body.get("class_method", "")
+    kwargs = body.get("input", {}) or {}
+
+    user_id = kwargs.get("user_id") or kwargs.get("userId")
+    session_id = kwargs.get("session_id") or kwargs.get("sessionId")
+    raw_message = kwargs.get("message")
+    is_gemini_enterprise = (class_method == "streaming_agent_run_with_events") or ("request_json" in kwargs)
+
+    if "request_json" in kwargs:
+        try:
+            req_data = json.loads(kwargs["request_json"])
+            user_id = req_data.get("user_id") or req_data.get("userId") or user_id
+            session_id = req_data.get("session_id") or req_data.get("sessionId") or session_id
+            if req_data.get("message") is not None:
+                raw_message = req_data.get("message")
+        except Exception as err:
+            logger.warning(f"Could not parse request_json: {err}")
+
+    user_id = user_id or "user"
+    session_id = session_id or f"session_{int(time.time())}"
+
+    # Build types.Content object correctly regardless of whether raw_message is dict, Content, or str
+    if isinstance(raw_message, types.Content):
+        content = raw_message
+    elif isinstance(raw_message, dict):
+        try:
+            content = types.Content(**raw_message)
+        except Exception:
+            parts_data = raw_message.get("parts", [])
+            parts = []
+            for p in parts_data:
+                if isinstance(p, dict) and "text" in p:
+                    parts.append(types.Part.from_text(text=str(p["text"])))
+                elif isinstance(p, str):
+                    parts.append(types.Part.from_text(text=p))
+            if not parts and "text" in raw_message:
+                parts = [types.Part.from_text(text=str(raw_message["text"]))]
+            content = types.Content(
+                role=raw_message.get("role", "user"),
+                parts=parts or [types.Part.from_text(text=str(raw_message))],
+            )
+    elif isinstance(raw_message, str):
+        content = types.Content(role="user", parts=[types.Part.from_text(text=raw_message)])
+    else:
+        content = types.Content(role="user", parts=[types.Part.from_text(text=str(raw_message or ""))])
+
+    return class_method, kwargs, user_id, session_id, content, is_gemini_enterprise
+
+
 @app.post("/api/stream_reasoning_engine")
 async def stream_reasoning_engine(request: FastAPIRequest):
     """Serve the Reasoning Engine streaming contract for the Vertex AI Console Playground and Gemini Enterprise."""
@@ -174,24 +228,7 @@ async def stream_reasoning_engine(request: FastAPIRequest):
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Invalid JSON: {exc}")
 
-    kwargs = body.get("input", {}) or {}
-
-    # Extract user message across different caller conventions
-    user_message = kwargs.get("message", "")
-    if isinstance(user_message, dict):
-        parts = user_message.get("parts", [{}])
-        user_message_text = parts[0].get("text", "") if parts else ""
-    elif "request_json" in kwargs:
-        try:
-            parsed_req = json.loads(kwargs["request_json"])
-            user_message_text = parsed_req.get("message", "")
-        except Exception:
-            user_message_text = str(kwargs["request_json"])
-    else:
-        user_message_text = str(user_message)
-
-    user_id = kwargs.get("user_id", "playground-user")
-    session_id = kwargs.get("session_id") or f"session_{int(time.time())}"
+    class_method, kwargs, user_id, session_id, content, is_ge = _parse_reasoning_engine_input(body)
 
     try:
         await session_service.create_session(
@@ -201,17 +238,39 @@ async def stream_reasoning_engine(request: FastAPIRequest):
         pass
 
     async def event_generator():
-        from vertexai.agent_engines import _utils
+        try:
+            from vertexai.agent_engines import _utils
+        except ImportError:
+            from agentplatform._genai import _agent_engines_utils as _utils
 
-        async for event in runner.run_async(
-            user_id=user_id,
-            session_id=session_id,
-            new_message=types.Content(
-                role="user", parts=[types.Part.from_text(text=user_message_text)]
-            ),
-        ):
-            event_dict = _utils.dump_event_for_json(event)
-            yield json.dumps(event_dict) + "\n"
+        try:
+            async for event in runner.run_async(
+                user_id=user_id,
+                session_id=session_id,
+                new_message=content,
+            ):
+                event_dict = _utils.dump_event_for_json(event)
+                if is_ge:
+                    # Gemini Enterprise streaming_agent_run_with_events contract
+                    chunk = {
+                        "events": [event_dict],
+                        "session_id": session_id,
+                        "artifacts": [],
+                    }
+                    yield json.dumps(chunk) + "\n"
+                else:
+                    # Vertex AI Console Playground / SDK stream_query contract
+                    yield json.dumps(event_dict) + "\n"
+        except Exception as exc:
+            logger.error(f"Error during streaming reasoning engine execution: {exc}", exc_info=True)
+            if is_ge:
+                err_event = {
+                    "content": {"parts": [{"text": f"Error: {exc}"}], "role": "agent"},
+                    "author": "agent",
+                    "actions": {},
+                }
+                yield json.dumps({"events": [err_event], "session_id": session_id, "artifacts": []}) + "\n"
+            raise
 
     return StreamingResponse(event_generator(), media_type="application/json")
 
@@ -224,21 +283,33 @@ async def reasoning_engine_query(request: FastAPIRequest):
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Invalid JSON: {exc}")
 
-    class_method = body.get("class_method", "")
-    kwargs = body.get("input", {}) or {}
+    class_method, kwargs, user_id, session_id, content, _ = _parse_reasoning_engine_input(body)
 
     if class_method in ("create_session", "async_create_session"):
-        user_id = kwargs.get("user_id", "playground-user")
-        session_id = f"session_{int(time.time())}"
         session = await session_service.create_session(
             app_name="gcp_agent", user_id=user_id, session_id=session_id
         )
         return JSONResponse(content={"output": {"id": session.id, "user_id": user_id}})
 
-    # Default synchronous query
-    user_message = kwargs.get("message", "")
-    user_id = kwargs.get("user_id", "user")
-    session_id = kwargs.get("session_id", "default_session")
+    if class_method in ("get_session", "async_get_session"):
+        session = await session_service.get_session(
+            app_name="gcp_agent", user_id=user_id, session_id=session_id
+        )
+        if session:
+            return JSONResponse(content={"output": {"id": session.id, "user_id": user_id}})
+        return JSONResponse(content={"output": None})
+
+    if class_method in ("list_sessions", "async_list_sessions"):
+        sessions = await session_service.list_sessions(
+            app_name="gcp_agent", user_id=user_id
+        )
+        return JSONResponse(content={"output": [s.id for s in (sessions or [])]})
+
+    if class_method in ("delete_session", "async_delete_session"):
+        await session_service.delete_session(
+            app_name="gcp_agent", user_id=user_id, session_id=session_id
+        )
+        return JSONResponse(content={"output": None})
 
     try:
         await session_service.create_session(
@@ -251,9 +322,7 @@ async def reasoning_engine_query(request: FastAPIRequest):
     async for event in runner.run_async(
         user_id=user_id,
         session_id=session_id,
-        new_message=types.Content(
-            role="user", parts=[types.Part.from_text(text=str(user_message))]
-        ),
+        new_message=content,
     ):
         if event.is_final_response():
             if event.content and event.content.parts:
