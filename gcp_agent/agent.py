@@ -5,9 +5,12 @@ endpoints (e.g. recommender.googleapis.com/mcp) using ADK's native McpToolset.
 No custom JSON-RPC client code is needed.
 """
 
+import json
 import os
+import time
 from typing import Any, Dict
-from fastapi import FastAPI, Request as FastAPIRequest
+from fastapi import FastAPI, HTTPException, Request as FastAPIRequest
+from fastapi.responses import JSONResponse, StreamingResponse
 from google.adk.agents import Agent
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
@@ -108,6 +111,7 @@ async def health_check():
 
 
 @app.get("/.well-known/agent-card.json")
+@app.get("/a2a/gcp_agent/.well-known/agent-card.json")
 async def get_agent_card(request: FastAPIRequest):
     base_url = str(request.base_url).rstrip("/")
     return {
@@ -121,6 +125,7 @@ async def get_agent_card(request: FastAPIRequest):
 
 
 @app.post("/a2a")
+@app.post("/a2a/gcp_agent")
 async def handle_a2a_invoke(payload: Dict[str, Any]):
     method = payload.get("method")
     if method == "agent/invoke":
@@ -159,3 +164,100 @@ async def handle_a2a_invoke(payload: Dict[str, Any]):
         "id": payload.get("id"),
         "error": {"code": -32601, "message": f"Method '{method}' not supported"},
     }
+
+
+@app.post("/api/stream_reasoning_engine")
+async def stream_reasoning_engine(request: FastAPIRequest):
+    """Serve the Reasoning Engine streaming contract for the Vertex AI Console Playground and Gemini Enterprise."""
+    try:
+        body = await request.json()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid JSON: {exc}")
+
+    kwargs = body.get("input", {}) or {}
+
+    # Extract user message across different caller conventions
+    user_message = kwargs.get("message", "")
+    if isinstance(user_message, dict):
+        parts = user_message.get("parts", [{}])
+        user_message_text = parts[0].get("text", "") if parts else ""
+    elif "request_json" in kwargs:
+        try:
+            parsed_req = json.loads(kwargs["request_json"])
+            user_message_text = parsed_req.get("message", "")
+        except Exception:
+            user_message_text = str(kwargs["request_json"])
+    else:
+        user_message_text = str(user_message)
+
+    user_id = kwargs.get("user_id", "playground-user")
+    session_id = kwargs.get("session_id") or f"session_{int(time.time())}"
+
+    try:
+        await session_service.create_session(
+            app_name="gcp_agent", user_id=user_id, session_id=session_id
+        )
+    except Exception:
+        pass
+
+    async def event_generator():
+        from vertexai.agent_engines import _utils
+
+        async for event in runner.run_async(
+            user_id=user_id,
+            session_id=session_id,
+            new_message=types.Content(
+                role="user", parts=[types.Part.from_text(text=user_message_text)]
+            ),
+        ):
+            event_dict = _utils.dump_event_for_json(event)
+            yield json.dumps(event_dict) + "\n"
+
+    return StreamingResponse(event_generator(), media_type="application/json")
+
+
+@app.post("/api/reasoning_engine")
+async def reasoning_engine_query(request: FastAPIRequest):
+    """Serve the Reasoning Engine synchronous contract."""
+    try:
+        body = await request.json()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid JSON: {exc}")
+
+    class_method = body.get("class_method", "")
+    kwargs = body.get("input", {}) or {}
+
+    if class_method in ("create_session", "async_create_session"):
+        user_id = kwargs.get("user_id", "playground-user")
+        session_id = f"session_{int(time.time())}"
+        session = await session_service.create_session(
+            app_name="gcp_agent", user_id=user_id, session_id=session_id
+        )
+        return JSONResponse(content={"output": {"id": session.id, "user_id": user_id}})
+
+    # Default synchronous query
+    user_message = kwargs.get("message", "")
+    user_id = kwargs.get("user_id", "user")
+    session_id = kwargs.get("session_id", "default_session")
+
+    try:
+        await session_service.create_session(
+            app_name="gcp_agent", user_id=user_id, session_id=session_id
+        )
+    except Exception:
+        pass
+
+    agent_response_text = ""
+    async for event in runner.run_async(
+        user_id=user_id,
+        session_id=session_id,
+        new_message=types.Content(
+            role="user", parts=[types.Part.from_text(text=str(user_message))]
+        ),
+    ):
+        if event.is_final_response():
+            if event.content and event.content.parts:
+                agent_response_text = event.content.parts[0].text
+
+    return JSONResponse(content={"output": agent_response_text})
+
