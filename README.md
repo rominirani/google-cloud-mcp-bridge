@@ -172,7 +172,7 @@ chmod +x deploy.sh
 ./deploy.sh
 ```
 
-#### Manual Deployment via `agents-cli`
+#### Step-by-Step Deployment via `agents-cli`
 Deploy directly to Google Cloud Agent Runtime:
 
 ```bash
@@ -185,6 +185,11 @@ agents-cli deploy \
   --update-env-vars="ACTIVE_MCP_SERVICE=recommender,GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT},GOOGLE_GENAI_USE_VERTEXAI=true,GOOGLE_CLOUD_LOCATION=${GOOGLE_CLOUD_LOCATION}"
 ```
 
+Check deployment status at any time:
+```bash
+agents-cli deploy --status
+```
+
 #### Automatic Cataloging in Google Cloud Agent Registry
 When deployed to Agent Runtime, Google Cloud **automatically catalogs** the agent in Agent Registry:
 
@@ -194,17 +199,30 @@ gcloud alpha agent-registry agents list \
   --location="$GOOGLE_CLOUD_LOCATION"
 ```
 
-#### Publish to Gemini Enterprise App
-Bind the deployed agent to your Gemini Enterprise App:
+#### Publish to Gemini Enterprise App via `agents-cli`
+1. List available Gemini Enterprise apps in your project:
+```bash
+agents-cli publish gemini-enterprise --list
+```
 
+2. Bind the deployed agent to your Gemini Enterprise App:
 ```bash
 agents-cli publish gemini-enterprise \
-  --gemini-enterprise-app-id="$GEMINI_ENTERPRISE_APP_ID" \
+  --gemini-enterprise-app-id="projects/PROJECT_NUMBER/locations/global/collections/default_collection/engines/APP_ID" \
   --display-name="GCP Recommender Agent" \
   --description="Audits Google Cloud resources and discovers cost optimization recommendations using Google's remote MCP server." \
   --tool-description="Audits Google Cloud resources for idle persistent disks, underutilized VMs, and cost savings." \
   --deployment-target="agent_runtime" \
   --registration-type="adk"
+```
+
+*(Or simply run `agents-cli publish gemini-enterprise --interactive` to be guided through app selection interactively!)*
+
+#### Test Deployed Agent via `agents-cli run`
+```bash
+agents-cli run \
+  --mode="adk" \
+  "Check for idle persistent disks in project ${GOOGLE_CLOUD_PROJECT} in zone us-central1-a"
 ```
 
 ---
