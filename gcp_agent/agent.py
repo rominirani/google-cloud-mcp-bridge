@@ -100,6 +100,8 @@ session_service = InMemorySessionService()
 runner = Runner(agent=root_agent, app_name="gcp_agent", session_service=session_service)
 
 
+@app.get("/")
+@app.get("/health")
 @app.get("/healthz")
 async def health_check():
     return {"status": "ok", "agent": root_agent.name}

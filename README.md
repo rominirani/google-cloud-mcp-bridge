@@ -143,7 +143,7 @@ python test_chat.py "What recommendations can you provide for persistent disks?"
 uvicorn agent:app --host 0.0.0.0 --port 8080
 
 # In another terminal: verify health check & Agent Card
-curl http://localhost:8080/healthz
+curl http://localhost:8080/health
 curl http://localhost:8080/.well-known/agent-card.json
 ```
 
@@ -192,6 +192,15 @@ gcloud run deploy gcp-recommender-agent \
 ```
 
 > **Important Flag Requirement**: When using `--functional-type="agent"`, Cloud Run requires `--identity-type="agent-identity"`. Specifying both flags ensures the Cloud Run service is automatically cataloged in Google Cloud Agent Registry.
+
+#### Verify Cloud Run Deployment
+```bash
+# Verify health check & Agent Card on Cloud Run
+curl -s https://YOUR_CLOUD_RUN_URL/health
+curl -s https://YOUR_CLOUD_RUN_URL/.well-known/agent-card.json
+```
+
+> **Why `/health` instead of `/healthz`?** On Google Cloud Run domains (`*.run.app`), Google Front End (GFE) reserves `/healthz` for internal platform health checks and returns a `404 (Not Found)` HTML error page. Use `/health` or `/.well-known/agent-card.json` for external probing.
 
 ---
 
