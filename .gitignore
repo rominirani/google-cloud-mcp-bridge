@@ -1,0 +1,29 @@
+# Python artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Virtual environments
+.venv/
+env/
+venv/
+ENV/
+
+# Environment variables & secrets
+.env
+*.env
+
+# Operating system artifacts
+.DS_Store
+Thumbs.db
+
+# ADK local development storage
+.adk/
+*.db
+
+# Publication & Blog artifacts (not tracked in companion repo)
+blog_post.md
+blog_post_medium.html
+generate_medium_html.py

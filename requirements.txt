@@ -1,0 +1,6 @@
+# Google Agent Development Kit (ADK) with MCP, GCP, and A2A support
+google-adk[mcp,gcp,a2a]>=0.1.0
+google-auth>=2.29.0
+requests>=2.31.0
+pydantic>=2.7.0
+pyyaml>=6.0.1
