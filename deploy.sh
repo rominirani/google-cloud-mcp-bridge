@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# Deployment Script: Google Cloud Remote MCP Bridge to Gemini Enterprise
+# Deployment Script: Google Cloud Remote MCP Bridge on Agent Runtime
 # ==============================================================================
 # This script automates:
-# 1. Verification of environment variables and Google Cloud CLI setup.
-# 2. Enabling required Google Cloud APIs.
+# 1. Verification of environment variables and CLI tools (gcloud, agents-cli).
+# 2. Enabling required Google Cloud APIs for Agent Runtime & Agent Registry.
 # 3. Creating a dedicated Service Account with least-privilege IAM roles.
-# 4. Deploying the bridge container to Cloud Run.
-# 5. Granting Gemini Enterprise invocation rights.
+# 4. Deploying the ADK agent to Agent Runtime using agents-cli.
+# 5. Verifying automatic cataloging in Google Cloud Agent Registry.
 # 6. Publishing the agent to Gemini Enterprise via agents-cli.
 # ==============================================================================
 
@@ -28,11 +28,17 @@ if [[ -z "$PROJECT_ID" ]]; then
 fi
 
 echo "=================================================================="
-echo " Starting Deployment for: $SERVICE_NAME"
-echo " Project ID: $PROJECT_ID | Region: $REGION"
+echo " Starting Agent Runtime Deployment: $SERVICE_NAME"
+echo " Project ID : $PROJECT_ID | Region: $REGION"
 echo "=================================================================="
 
-# Fetch GCP Project Number (needed for service-to-service IAM bindings)
+# Check CLI prerequisites
+if ! command -v agents-cli &>/dev/null; then
+  echo "ERROR: 'agents-cli' is not installed."
+  echo "Install it via: uv tool install google-agents-cli"
+  exit 1
+fi
+
 PROJECT_NUMBER=$(gcloud projects describe "$PROJECT_ID" --format="value(projectNumber)")
 SA_EMAIL="${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
 
@@ -42,13 +48,12 @@ SA_EMAIL="${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
 echo ""
 echo "--> Step 1: Enabling required Google Cloud APIs..."
 gcloud services enable \
+  aiplatform.googleapis.com \
+  agentregistry.googleapis.com \
   recommender.googleapis.com \
-  run.googleapis.com \
+  discoveryengine.googleapis.com \
   artifactregistry.googleapis.com \
   cloudbuild.googleapis.com \
-  agentregistry.googleapis.com \
-  discoveryengine.googleapis.com \
-  aiplatform.googleapis.com \
   --project="$PROJECT_ID"
 
 echo "    [OK] APIs enabled successfully."
@@ -59,7 +64,6 @@ echo "    [OK] APIs enabled successfully."
 echo ""
 echo "--> Step 2: Configuring Service Account and IAM Roles..."
 
-# Create service account if it does not already exist
 if ! gcloud iam service-accounts describe "$SA_EMAIL" --project="$PROJECT_ID" &>/dev/null; then
   gcloud iam service-accounts create "$SA_NAME" \
     --display-name="MCP Bridge Agent Runtime SA" \
@@ -69,7 +73,7 @@ else
   echo "    Service account already exists: $SA_EMAIL"
 fi
 
-# Grant roles/mcp.toolUser: Required to execute tool calls on Google Remote MCP servers
+# 1. roles/mcp.toolUser: Required to execute tool calls on Google Remote MCP servers
 echo "    Granting roles/mcp.toolUser..."
 gcloud projects add-iam-policy-binding "$PROJECT_ID" \
   --member="serviceAccount:${SA_EMAIL}" \
@@ -77,7 +81,7 @@ gcloud projects add-iam-policy-binding "$PROJECT_ID" \
   --condition=None \
   --quiet
 
-# Grant roles/recommender.viewer: Required to read recommendations from Recommender API
+# 2. roles/recommender.viewer: Required to read recommendations from Recommender API
 echo "    Granting roles/recommender.viewer..."
 gcloud projects add-iam-policy-binding "$PROJECT_ID" \
   --member="serviceAccount:${SA_EMAIL}" \
@@ -85,7 +89,7 @@ gcloud projects add-iam-policy-binding "$PROJECT_ID" \
   --condition=None \
   --quiet
 
-# Grant roles/aiplatform.user: Required for the agent to call Vertex AI / Gemini models
+# 3. roles/aiplatform.user: Required for the agent to call Vertex AI / Gemini models
 echo "    Granting roles/aiplatform.user..."
 gcloud projects add-iam-policy-binding "$PROJECT_ID" \
   --member="serviceAccount:${SA_EMAIL}" \
@@ -93,7 +97,7 @@ gcloud projects add-iam-policy-binding "$PROJECT_ID" \
   --condition=None \
   --quiet
 
-# Grant roles/compute.viewer: Required to view Compute Engine disk and instance telemetry
+# 4. roles/compute.viewer: Required to view Compute Engine resource metadata
 echo "    Granting roles/compute.viewer..."
 gcloud projects add-iam-policy-binding "$PROJECT_ID" \
   --member="serviceAccount:${SA_EMAIL}" \
@@ -104,90 +108,65 @@ gcloud projects add-iam-policy-binding "$PROJECT_ID" \
 echo "    [OK] IAM roles granted."
 
 # ------------------------------------------------------------------------------
-# 4. Deploy to Cloud Run
+# 4. Deploy to Agent Runtime
 # ------------------------------------------------------------------------------
 echo ""
-echo "--> Step 3: Deploying container to Cloud Run..."
+echo "--> Step 3: Deploying ADK Agent to Agent Runtime..."
 
-# Deploy to Cloud Run using gcloud alpha run deploy with Agent Functional Type
-# Note: --functional-type="agent" requires --identity-type="agent-identity"
-if gcloud alpha run deploy "$SERVICE_NAME" \
-  --source="." \
-  --region="$REGION" \
+agents-cli deploy \
+  --deployment-target="agent_runtime" \
   --project="$PROJECT_ID" \
+  --region="$REGION" \
+  --service-name="$SERVICE_NAME" \
   --service-account="$SA_EMAIL" \
-  --set-env-vars="ACTIVE_MCP_SERVICE=recommender,GOOGLE_CLOUD_PROJECT=${PROJECT_ID},GOOGLE_GENAI_USE_VERTEXAI=true,GOOGLE_CLOUD_LOCATION=${REGION}" \
-  --functional-type="agent" \
-  --identity-type="agent-identity" \
-  --allow-unauthenticated \
-  --quiet; then
-  echo "    [OK] Deployed with functional-type=agent and identity-type=agent-identity."
-else
-  echo "    [WARN] Alpha deploy failed or alpha component unavailable. Falling back to standard gcloud run deploy..."
-  gcloud run deploy "$SERVICE_NAME" \
-    --source="." \
-    --region="$REGION" \
-    --project="$PROJECT_ID" \
-    --service-account="$SA_EMAIL" \
-    --set-env-vars="ACTIVE_MCP_SERVICE=recommender,GOOGLE_CLOUD_PROJECT=${PROJECT_ID},GOOGLE_GENAI_USE_VERTEXAI=true,GOOGLE_CLOUD_LOCATION=${REGION}" \
-    --allow-unauthenticated \
-    --quiet
-fi
+  --update-env-vars="ACTIVE_MCP_SERVICE=recommender,GOOGLE_CLOUD_PROJECT=${PROJECT_ID},GOOGLE_GENAI_USE_VERTEXAI=true,GOOGLE_CLOUD_LOCATION=${REGION}" \
+  --no-confirm-project
 
-SERVICE_URL=$(gcloud run services describe "$SERVICE_NAME" \
-  --platform=managed \
-  --region="$REGION" \
-  --project="$PROJECT_ID" \
-  --format="value(status.url)")
-
-echo "    [OK] Cloud Run deployed at: $SERVICE_URL"
+echo "    [OK] Deployed successfully to Agent Runtime."
 
 # ------------------------------------------------------------------------------
-# 5. Authorize Gemini Enterprise Invocation
+# 5. Verify Cataloging in Google Cloud Agent Registry
 # ------------------------------------------------------------------------------
 echo ""
-echo "--> Step 4: Authorizing Gemini Enterprise Discovery Engine to call Cloud Run..."
-DISCOVERY_ENGINE_SA="service-${PROJECT_NUMBER}@gcp-sa-discoveryengine.iam.gserviceaccount.com"
+echo "--> Step 4: Verifying registration in Google Cloud Agent Registry..."
 
-gcloud run services add-iam-policy-binding "$SERVICE_NAME" \
-  --region="$REGION" \
+gcloud alpha agent-registry agents list \
   --project="$PROJECT_ID" \
-  --member="serviceAccount:${DISCOVERY_ENGINE_SA}" \
-  --role="roles/run.servicesInvoker" \
-  --quiet || true
+  --location="$REGION" \
+  --format="table(displayName,name,createTime)" || true
 
-echo "    [OK] Invocation permissions granted."
+echo "    [OK] Agent Runtime agents are automatically cataloged in Agent Registry."
 
 # ------------------------------------------------------------------------------
 # 6. Publish to Gemini Enterprise App
 # ------------------------------------------------------------------------------
 echo ""
 echo "--> Step 5: Publishing to Gemini Enterprise App..."
-CARD_URL="${SERVICE_URL}/.well-known/agent-card.json"
 
 if [[ -n "${GEMINI_ENTERPRISE_APP_ID:-}" ]]; then
-  echo "    Publishing agent card to: $GEMINI_ENTERPRISE_APP_ID"
+  echo "    Publishing agent to: $GEMINI_ENTERPRISE_APP_ID"
   agents-cli publish gemini-enterprise \
-    --agent-card-url="$CARD_URL" \
     --gemini-enterprise-app-id="$GEMINI_ENTERPRISE_APP_ID" \
     --display-name="GCP Recommender Agent" \
     --description="Audits Google Cloud resources and discovers cost optimization recommendations using Google's remote MCP server." \
-    --deployment-target="cloud_run" \
-    --registration-type="a2a"
+    --tool-description="Audits Google Cloud resources for idle persistent disks, underutilized VMs, and cost savings." \
+    --deployment-target="agent_runtime" \
+    --registration-type="adk"
 
   echo "    [OK] Successfully published to Gemini Enterprise!"
 else
   echo "    NOTE: GEMINI_ENTERPRISE_APP_ID was not specified."
-  echo "    To publish manually, run:"
+  echo "    To publish to your Gemini Enterprise app, run:"
   echo "    agents-cli publish gemini-enterprise \\"
-  echo "      --agent-card-url=\"$CARD_URL\" \\"
   echo "      --gemini-enterprise-app-id=\"projects/${PROJECT_NUMBER}/locations/global/collections/default_collection/engines/YOUR_APP_ID\" \\"
-  echo "      --display-name=\"GCP Recommender Agent\""
+  echo "      --display-name=\"GCP Recommender Agent\" \\"
+  echo "      --deployment-target=\"agent_runtime\" \\"
+  echo "      --registration-type=\"adk\""
 fi
 
 echo ""
 echo "=================================================================="
-echo " Deployment Complete!"
-echo " Service Endpoint : $SERVICE_URL"
-echo " Agent Card URL   : $CARD_URL"
+echo " Deployment and Governance Setup Complete!"
+echo " Deployment Target: Agent Runtime ($REGION)"
+echo " Governance Target: Google Cloud Agent Registry"
 echo "=================================================================="

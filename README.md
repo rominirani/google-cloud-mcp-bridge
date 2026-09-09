@@ -46,15 +46,16 @@ ADK automatically handles:
  │    "What idle resources can we clean up in prod?"     │
  └───────────────────────────┬────────────────────────────┘
                              │
-                             ▼ A2A Invocation
+                             ▼ Native ADK Invocation (:streamQuery)
  ┌────────────────────────────────────────────────────────┐
- │ 2. Cloud Run Service                                   │
- │    - agent.py (ADK root_agent + A2A endpoint)          │
+ │ 2. Agent Runtime (Gemini Enterprise Agent Platform)    │
+ │    - Native ADK root_agent                             │
+ │    - Auto-cataloged in Google Cloud Agent Registry     │
  │    - skills/recommender/SKILL.md (Instructions)        │
  │    - Native McpToolset (Zero custom client code)       │
  └───────────────────────────┬────────────────────────────┘
                              │
-                             ▼ JSON-RPC over HTTP (Bearer token)
+                             ▼ JSON-RPC over HTTPS (OAuth2 Bearer token)
  ┌────────────────────────────────────────────────────────┐
  │ 3. Google-Managed Remote MCP Server                    │
  │    https://recommender.googleapis.com/mcp              │
@@ -70,15 +71,15 @@ google-cloud-mcp-bridge/
 ├── gcp_agent/            # ADK Agent package (valid Python module for ADK loader)
 │   ├── __init__.py       # Exports root_agent for ADK loader
 │   └── agent.py          # Native ADK Agent using McpToolset + A2A endpoint
-├── agent.py              # Root wrapper re-exporting from gcp_agent for backward compatibility
+├── agent.py              # Root wrapper re-exporting from gcp_agent
 ├── skills/
 │   └── recommender/
 │       └── SKILL.md      # Skill instructions for cost and idle resource analysis
-├── Dockerfile            # Container image build for Cloud Run
+├── Dockerfile            # Container image build for Agent Runtime / Cloud Run
 ├── requirements.txt      # Python dependencies (google-adk[mcp,gcp,a2a])
 ├── test_client.py        # Local script to verify ADK McpToolset discovery
 ├── test_chat.py          # Local script to run conversational prompts via ADK Runner
-├── deploy.sh             # Script to deploy to Cloud Run and publish via agents-cli
+├── deploy.sh             # Script to deploy to Agent Runtime and publish via agents-cli
 └── README.md             # Project documentation
 ```
 
@@ -86,7 +87,22 @@ google-cloud-mcp-bridge/
 
 ## Quickstart
 
-### 1. Set Up Python Virtual Environment
+### 1. Install `uv` and `agents-cli`
+
+`agents-cli` is Google Cloud's official CLI toolkit for developing, evaluating, and deploying AI agents on Google Cloud. Install it using `uv`:
+
+```bash
+# Install uv (if not already installed)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Install agents-cli
+uv tool install google-agents-cli
+
+# Verify installation
+agents-cli info
+```
+
+### 2. Set Up Python Virtual Environment
 ```bash
 # Verify Python version (3.10+)
 python3 --version
@@ -100,24 +116,24 @@ pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-### 2. Configure Google Cloud Project & Enable APIs
+### 3. Configure Google Cloud Project & Enable APIs
 ```bash
 export GOOGLE_CLOUD_PROJECT="your-project-id"
+export GOOGLE_CLOUD_LOCATION="us-central1"
 gcloud config set project "$GOOGLE_CLOUD_PROJECT"
 
-# Enable all required APIs
+# Enable all required APIs for Agent Runtime & Agent Registry
 gcloud services enable \
+  aiplatform.googleapis.com \
+  agentregistry.googleapis.com \
   recommender.googleapis.com \
-  run.googleapis.com \
+  discoveryengine.googleapis.com \
   artifactregistry.googleapis.com \
   cloudbuild.googleapis.com \
-  agentregistry.googleapis.com \
-  discoveryengine.googleapis.com \
-  aiplatform.googleapis.com \
   --project="$GOOGLE_CLOUD_PROJECT"
 ```
 
-### 3. Test Locally (No Cloud Deployment)
+### 4. Test Locally (No Cloud Deployment)
 
 #### Test A: Verify Remote MCP Tool Discovery
 ```bash
@@ -130,32 +146,22 @@ python test_client.py
 ```bash
 # Enable Vertex AI for LLM reasoning with Application Default Credentials
 export GOOGLE_GENAI_USE_VERTEXAI=true
-export GOOGLE_CLOUD_PROJECT="your-project-id"
-export GOOGLE_CLOUD_LOCATION="us-central1"
 
 # Run a test prompt
 python test_chat.py "What recommendations can you provide for persistent disks?"
 ```
 
-#### Test C: Test FastAPI & A2A Endpoints Locally
+#### Test C: Visual Browser Chat via `adk web`
 ```bash
-# Start local server
-uvicorn agent:app --host 0.0.0.0 --port 8080
-
-# In another terminal: verify health check & Agent Card
-curl http://localhost:8080/health
-curl http://localhost:8080/.well-known/agent-card.json
-```
-
-#### Test D: Visual Browser Chat via `adk web`
-```bash
-# Start ADK development server with Web UI and A2A endpoints pointing to gcp_agent
-adk web --port 8085 --a2a gcp_agent
+# Start ADK development server with Web UI pointing to gcp_agent
+adk web --port 8085 gcp_agent
 
 # Open http://127.0.0.1:8085/dev-ui/ in your browser
 ```
 
-### 4. Deploy to Cloud Run and Publish to Gemini Enterprise
+---
+
+### 5. Deploy to Agent Runtime & Publish to Gemini Enterprise
 
 #### Automated Deployment via Script
 ```bash
@@ -166,41 +172,40 @@ chmod +x deploy.sh
 ./deploy.sh
 ```
 
-#### Manual Cloud Run Deployment Commands
-If deploying manually with Google Cloud's native Agent Registry cataloging, use `gcloud alpha` with the paired functional and identity type flags:
+#### Manual Deployment via `agents-cli`
+Deploy directly to Google Cloud Agent Runtime:
 
 ```bash
-# Option 1: Native Agent Registration via gcloud alpha
-gcloud alpha run deploy gcp-recommender-agent \
-  --source="." \
-  --region="us-central1" \
+agents-cli deploy \
+  --deployment-target="agent_runtime" \
   --project="$GOOGLE_CLOUD_PROJECT" \
+  --region="$GOOGLE_CLOUD_LOCATION" \
+  --service-name="gcp-recommender-agent" \
   --service-account="mcp-bridge-agent-sa@${GOOGLE_CLOUD_PROJECT}.iam.gserviceaccount.com" \
-  --set-env-vars="ACTIVE_MCP_SERVICE=recommender,GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT},GOOGLE_GENAI_USE_VERTEXAI=true,GOOGLE_CLOUD_LOCATION=us-central1" \
-  --functional-type="agent" \
-  --identity-type="agent-identity" \
-  --allow-unauthenticated
-
-# Option 2: Standard GA Deployment (without alpha flags)
-gcloud run deploy gcp-recommender-agent \
-  --source="." \
-  --region="us-central1" \
-  --project="$GOOGLE_CLOUD_PROJECT" \
-  --service-account="mcp-bridge-agent-sa@${GOOGLE_CLOUD_PROJECT}.iam.gserviceaccount.com" \
-  --set-env-vars="ACTIVE_MCP_SERVICE=recommender,GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT},GOOGLE_GENAI_USE_VERTEXAI=true,GOOGLE_CLOUD_LOCATION=us-central1" \
-  --allow-unauthenticated
+  --update-env-vars="ACTIVE_MCP_SERVICE=recommender,GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT},GOOGLE_GENAI_USE_VERTEXAI=true,GOOGLE_CLOUD_LOCATION=${GOOGLE_CLOUD_LOCATION}"
 ```
 
-> **Important Flag Requirement**: When using `--functional-type="agent"`, Cloud Run requires `--identity-type="agent-identity"`. Specifying both flags ensures the Cloud Run service is automatically cataloged in Google Cloud Agent Registry.
+#### Automatic Cataloging in Google Cloud Agent Registry
+When deployed to Agent Runtime, Google Cloud **automatically catalogs** the agent in Agent Registry:
 
-#### Verify Cloud Run Deployment
 ```bash
-# Verify health check & Agent Card on Cloud Run
-curl -s https://YOUR_CLOUD_RUN_URL/health
-curl -s https://YOUR_CLOUD_RUN_URL/.well-known/agent-card.json
+gcloud alpha agent-registry agents list \
+  --project="$GOOGLE_CLOUD_PROJECT" \
+  --location="$GOOGLE_CLOUD_LOCATION"
 ```
 
-> **Why `/health` instead of `/healthz`?** On Google Cloud Run domains (`*.run.app`), Google Front End (GFE) reserves `/healthz` for internal platform health checks and returns a `404 (Not Found)` HTML error page. Use `/health` or `/.well-known/agent-card.json` for external probing.
+#### Publish to Gemini Enterprise App
+Bind the deployed agent to your Gemini Enterprise App:
+
+```bash
+agents-cli publish gemini-enterprise \
+  --gemini-enterprise-app-id="$GEMINI_ENTERPRISE_APP_ID" \
+  --display-name="GCP Recommender Agent" \
+  --description="Audits Google Cloud resources and discovers cost optimization recommendations using Google's remote MCP server." \
+  --tool-description="Audits Google Cloud resources for idle persistent disks, underutilized VMs, and cost savings." \
+  --deployment-target="agent_runtime" \
+  --registration-type="adk"
+```
 
 ---
 
