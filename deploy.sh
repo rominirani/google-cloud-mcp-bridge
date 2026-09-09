@@ -109,15 +109,30 @@ echo "    [OK] IAM roles granted."
 echo ""
 echo "--> Step 3: Deploying container to Cloud Run..."
 
-gcloud run deploy "$SERVICE_NAME" \
+# Deploy to Cloud Run using gcloud alpha run deploy with Agent Functional Type
+# Note: --functional-type="agent" requires --identity-type="agent-identity"
+if gcloud alpha run deploy "$SERVICE_NAME" \
   --source="." \
   --region="$REGION" \
   --project="$PROJECT_ID" \
   --service-account="$SA_EMAIL" \
   --set-env-vars="ACTIVE_MCP_SERVICE=recommender,GOOGLE_CLOUD_PROJECT=${PROJECT_ID},GOOGLE_GENAI_USE_VERTEXAI=true,GOOGLE_CLOUD_LOCATION=${REGION}" \
   --functional-type="agent" \
+  --identity-type="agent-identity" \
   --allow-unauthenticated \
-  --quiet
+  --quiet; then
+  echo "    [OK] Deployed with functional-type=agent and identity-type=agent-identity."
+else
+  echo "    [WARN] Alpha deploy failed or alpha component unavailable. Falling back to standard gcloud run deploy..."
+  gcloud run deploy "$SERVICE_NAME" \
+    --source="." \
+    --region="$REGION" \
+    --project="$PROJECT_ID" \
+    --service-account="$SA_EMAIL" \
+    --set-env-vars="ACTIVE_MCP_SERVICE=recommender,GOOGLE_CLOUD_PROJECT=${PROJECT_ID},GOOGLE_GENAI_USE_VERTEXAI=true,GOOGLE_CLOUD_LOCATION=${REGION}" \
+    --allow-unauthenticated \
+    --quiet
+fi
 
 SERVICE_URL=$(gcloud run services describe "$SERVICE_NAME" \
   --platform=managed \

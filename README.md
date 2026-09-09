@@ -156,6 +156,8 @@ adk web --port 8085 --a2a gcp_agent
 ```
 
 ### 4. Deploy to Cloud Run and Publish to Gemini Enterprise
+
+#### Automated Deployment via Script
 ```bash
 export GOOGLE_CLOUD_REGION="us-central1"
 export GEMINI_ENTERPRISE_APP_ID="projects/PROJECT_NUMBER/locations/global/collections/default_collection/engines/APP_ID"
@@ -163,6 +165,33 @@ export GEMINI_ENTERPRISE_APP_ID="projects/PROJECT_NUMBER/locations/global/collec
 chmod +x deploy.sh
 ./deploy.sh
 ```
+
+#### Manual Cloud Run Deployment Commands
+If deploying manually with Google Cloud's native Agent Registry cataloging, use `gcloud alpha` with the paired functional and identity type flags:
+
+```bash
+# Option 1: Native Agent Registration via gcloud alpha
+gcloud alpha run deploy gcp-recommender-agent \
+  --source="." \
+  --region="us-central1" \
+  --project="$GOOGLE_CLOUD_PROJECT" \
+  --service-account="mcp-bridge-agent-sa@${GOOGLE_CLOUD_PROJECT}.iam.gserviceaccount.com" \
+  --set-env-vars="ACTIVE_MCP_SERVICE=recommender,GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT},GOOGLE_GENAI_USE_VERTEXAI=true,GOOGLE_CLOUD_LOCATION=us-central1" \
+  --functional-type="agent" \
+  --identity-type="agent-identity" \
+  --allow-unauthenticated
+
+# Option 2: Standard GA Deployment (without alpha flags)
+gcloud run deploy gcp-recommender-agent \
+  --source="." \
+  --region="us-central1" \
+  --project="$GOOGLE_CLOUD_PROJECT" \
+  --service-account="mcp-bridge-agent-sa@${GOOGLE_CLOUD_PROJECT}.iam.gserviceaccount.com" \
+  --set-env-vars="ACTIVE_MCP_SERVICE=recommender,GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT},GOOGLE_GENAI_USE_VERTEXAI=true,GOOGLE_CLOUD_LOCATION=us-central1" \
+  --allow-unauthenticated
+```
+
+> **Important Flag Requirement**: When using `--functional-type="agent"`, Cloud Run requires `--identity-type="agent-identity"`. Specifying both flags ensures the Cloud Run service is automatically cataloged in Google Cloud Agent Registry.
 
 ---
 
