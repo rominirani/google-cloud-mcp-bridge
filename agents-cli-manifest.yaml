@@ -1,0 +1,11 @@
+name: gcp-recommender-agent
+agent_directory: gcp_agent
+base_template: adk
+region: us-central1
+language: python
+acli_version: 1.5.0
+create_params:
+  deployment_target: agent_runtime
+  is_a2a: false
+  session_type: none
+  cicd_runner: skip

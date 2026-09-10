@@ -28,7 +28,6 @@ blog_post.md
 blog_post_medium.html
 generate_medium_html.py
 
-# agents-cli generated files
-agents-cli-manifest.yaml
+# agents-cli deployment metadata (generated upon deployment)
 deployment_metadata.json
 

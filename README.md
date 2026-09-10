@@ -72,6 +72,7 @@ google-cloud-mcp-bridge/
 ├── skills/
 │   └── recommender/
 │       └── SKILL.md      # Skill instructions for cost and idle resource analysis
+├── agents-cli-manifest.yaml # Project descriptor and deployment target metadata
 ├── Dockerfile            # Container image build for Agent Runtime
 ├── requirements.txt      # Python dependencies (google-adk[mcp,gcp])
 ├── test_client.py        # Local script to verify ADK McpToolset discovery
@@ -100,6 +101,21 @@ agents-cli info
 ```
 
 ### 2. Scaffold or Bootstrap the Project with `agents-cli`
+
+> [!IMPORTANT]
+> **Using the Companion Repository? You Can Skip `scaffold create`!**
+> 
+> If you have cloned this repository, **you do not need to run `agents-cli scaffold create`**. The entire project layout, virtual environment setup, ADK agent logic, skill instructions, and configuration files are already pre-assembled for you. Proceed directly to **Step 3 (Set Up Python Virtual Environment)**.
+> 
+> **If you prefer to scaffold your own project from scratch:**
+> 1. Run the `agents-cli scaffold create` command below to generate a fresh ADK project skeleton.
+> 2. Then, copy over the essential bridge files from this repository into your new project:
+>    - `gcp_agent/agent.py` — The core ADK Agent definition with `McpToolset` and Vertex AI Reasoning Engine routes.
+>    - `gcp_agent/__init__.py` — Package entrypoint exposing `root_agent`.
+>    - `skills/recommender/SKILL.md` — Domain reasoning instructions for analyzing idle disks and cloud spend.
+>    - `requirements.txt` — Project dependencies (`google-adk[mcp,gcp]`).
+>    - `test_client.py` & `test_chat.py` — Local validation scripts.
+>    - `deploy.sh` — Deployment and Gemini Enterprise registration script.
 
 If starting a new agent from scratch, you can scaffold it in one command using `agents-cli scaffold create`:
 
