@@ -144,14 +144,12 @@ export GOOGLE_CLOUD_PROJECT="your-project-id"
 export GOOGLE_CLOUD_LOCATION="us-central1"
 gcloud config set project "$GOOGLE_CLOUD_PROJECT"
 
-# Enable all required APIs for Agent Runtime & Agent Registry
+# Enable required APIs for Agent Runtime, Agent Registry, and Gemini Enterprise
 gcloud services enable \
   aiplatform.googleapis.com \
   agentregistry.googleapis.com \
   recommender.googleapis.com \
   discoveryengine.googleapis.com \
-  artifactregistry.googleapis.com \
-  cloudbuild.googleapis.com \
   --project="$GOOGLE_CLOUD_PROJECT"
 ```
 

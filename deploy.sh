@@ -52,8 +52,6 @@ gcloud services enable \
   agentregistry.googleapis.com \
   recommender.googleapis.com \
   discoveryengine.googleapis.com \
-  artifactregistry.googleapis.com \
-  cloudbuild.googleapis.com \
   --project="$PROJECT_ID"
 
 echo "    [OK] APIs enabled successfully."
