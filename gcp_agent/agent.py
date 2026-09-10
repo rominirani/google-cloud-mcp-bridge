@@ -37,7 +37,7 @@ MCP_CATALOG: Dict[str, str] = {
 # Active service configuration
 SERVICE_NAME = os.getenv("ACTIVE_MCP_SERVICE", "recommender").lower()
 MCP_URL = os.getenv("MCP_SERVER_URL", MCP_CATALOG.get(SERVICE_NAME, MCP_CATALOG["recommender"]))
-MODEL_NAME = os.getenv("MODEL_NAME", "gemini-3.7-flash")
+MODEL_NAME = os.getenv("MODEL_NAME", "gemini-2.5-flash")
 
 
 def get_auth_headers(ctx=None) -> Dict[str, str]:
