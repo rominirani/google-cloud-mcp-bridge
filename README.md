@@ -1,26 +1,64 @@
 # Google Cloud Remote MCP Bridge to Gemini Enterprise
 
-A production-ready reference architecture connecting official **Google Cloud Remote Model Context Protocol (MCP) servers** to **Gemini Enterprise** using the **Google Agent Development Kit (ADK)** and **Vertex AI Agent Runtime**.
+A production-ready reference architecture connecting **Model Context Protocol (MCP) servers** and **Agent Skills** to **Gemini Enterprise** using the **Google Agent Development Kit (ADK)** and **Vertex AI Agent Runtime**.
 
 ---
 
-### Architecture Overview
+## The Vision: Combining MCP Servers with Skills in Gemini Enterprise
+
+An enterprise AI assistant requires two distinct, complementary dimensions to deliver dependable business value:
+1. **The "Hands" (Tool Execution)**: Provided by the **Model Context Protocol (MCP)**. Remote MCP servers expose standardized, discoverable APIs, databases, and services to LLMs via JSON-RPC contracts (`tools/list` and `tools/call`).
+2. **The "Playbook" (Domain Intelligence)**: Provided by **Agent Skills (`SKILL.md`)**. Skills codify domain expertise, standard operating procedures (SOPs), multi-step investigation logic, mathematical reasoning formulas, output formatting contracts, and guardrails.
+
+By pairing an **MCP Server** with an **Agent Skill** inside the **Google Agent Development Kit (ADK)** and hosting it on **Vertex AI Agent Runtime**, we create a governed, enterprise-grade AI teammate surfaced directly in **Gemini Enterprise**—where employees and teams collaborate daily.
 
 ```mermaid
 flowchart LR
-    User([User in Gemini Enterprise]) -->|1. Chat Prompt| Gateway[Vertex AI Agent Runtime]
-    Gateway -->|2. Event Stream| Container[ADK Agent Container<br/>gcp_agent/agent.py]
-    Container -->|3. OAuth2 JSON-RPC| RemoteMCP[Google Remote MCP Server<br/>recommender.googleapis.com/mcp]
-    RemoteMCP -->|4. Live Recommendations| GCP[(Google Cloud APIs)]
+    subgraph Inputs ["1. Agent Composition"]
+        MCP["<b>Remote MCP Server</b><br/><i>(Actions & Tools)</i><br/>• Google-Managed (Recommender, BigQuery...)<br/>• Or your own Custom MCP Server"]
+        Skill["<b>Agent Skill (SKILL.md)</b><br/><i>(Playbook & SOPs)</i><br/>• Investigation protocols<br/>• Calculations & synthesis<br/>• Executive formatting & safety"]
+    end
+
+    subgraph Runtime ["2. Runtime & Governance"]
+        ADK["<b>ADK Agent Bridge</b><br/><i>(google-adk[mcp])</i><br/>Dynamic Auth + Tool Binding"]
+        VAI["<b>Vertex AI Agent Runtime</b><br/><i>(Serverless Reasoning Engine)</i>"]
+        Registry["<b>Google Cloud Agent Registry</b><br/><i>(Central Fleet Catalog)</i>"]
+    end
+
+    subgraph Experience ["3. Enterprise Consumption"]
+        GE["<b>Gemini Enterprise App</b><br/><i>(Corporate Conversational Portal)</i>"]
+        User(["<b>Enterprise Users</b><br/><i>(FinOps, SREs, Product, Execs)</i>"])
+    end
+
+    MCP --> ADK
+    Skill --> ADK
+    ADK --> VAI
+    VAI -.->|Auto-Catalog| Registry
+    Registry -.->|Bind & Publish| GE
+    VAI -->|Streaming Event Chunks| GE
+    User <-->|Natural Language Chat| GE
 ```
 
-### Key Capabilities
+### Value Proposition
 
-- **Native ADK `McpToolset`**: Direct HTTPS connection to Google Cloud's remote MCP servers with dynamic tool discovery (`tools/list`) and automated schema conversion for Gemini.
-- **Dynamic Token Management**: Dynamic OAuth2 token refresh via Application Default Credentials (ADC) with automatic `X-Goog-User-Project` injection.
-- **Serverless Hosting**: Packaged as a standard container running on **Vertex AI Agent Runtime (Reasoning Engine)**.
-- **Automated Fleet Governance**: Automatically cataloged into **Google Cloud Agent Registry** upon deployment.
-- **Gemini Enterprise Integration**: Bound directly to your Gemini Enterprise chat application via `agents-cli publish`.
+- **Democratizing Enterprise Operations**: Enables non-technical stakeholders (FinOps, product managers, leadership) to audit, inspect, and interact with live cloud infrastructure using conversational natural language.
+- **Universal Blueprint (Google-Managed or Custom MCP Servers)**: While this implementation uses Google Cloud's **Recommender MCP Server**, the architecture is 100% generic:
+  - Connect to **any Google-managed remote MCP server** (Compute Engine, BigQuery, Cloud Storage, Billing).
+  - Connect to **your own custom remote MCP server** (internal enterprise microservices, ServiceNow, ERP, or CMDB) with identical runtime and publishing mechanics.
+- **Automated Fleet Governance**: Deploying to Agent Runtime automatically registers your agent in **Google Cloud Agent Registry**.
+
+### Why Wrap an MCP Server with a Skill? (Skill vs. Raw MCP Server)
+
+Exposing a raw MCP server directly to an LLM provides tools without context. Wrapping the MCP server with an **Agent Skill (`SKILL.md`)** transforms raw endpoints into a trusted colleague:
+
+| Dimension | Exposing Raw MCP Server Directly | Wrapping MCP Server with an Agent Skill (`SKILL.md`) |
+| :--- | :--- | :--- |
+| **Operational Playbook (SOPs)** | **Absent**: Model sees flat functions (`list_recommendations`) without knowing execution order or scoping rules. | **Deterministic**: Skill establishes standard operating procedures: scoping project/zone, checking specific recommenders, and ranking findings. |
+| **Data Interpretation** | **Unstructured**: Raw multi-megabyte JSON payloads lead to hallucinated summaries or unformatted dumps. | **Quantitative Synthesis**: Skill directs extraction of monetary savings (`primaryImpact.costProjection`), annual run-rate math, and executive Markdown tables. |
+| **Actionable Remediation** | **Passive**: Highlights issues without verified paths to resolve them. | **Actionable Solutions**: Generates tested, copy-pasteable `gcloud` CLI commands or remediation steps with safety notices. |
+| **Guardrails & Safety** | **Uncontrolled**: Risk of accidental mutations or parameter hallucinations. | **Strictly Governed**: Enforces read-only defaults and requires explicit user confirmation before destructive actions. |
+
+> **Key Takeaway**: An MCP server gives an AI assistant **hands**; a Skill gives it **judgment**.
 
 ---
 
