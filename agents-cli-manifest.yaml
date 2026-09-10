@@ -1,7 +1,7 @@
 name: gcp-recommender-agent
 agent_directory: gcp_agent
 base_template: adk
-region: us-central1
+region: global
 language: python
 acli_version: 1.5.0
 create_params:
