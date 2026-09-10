@@ -236,6 +236,13 @@ gcloud alpha agent-registry agents list \
 ```
 
 #### Publish to Gemini Enterprise App via `agents-cli`
+
+> [!NOTE]
+> **Gemini Enterprise Prerequisites**:
+> - **API & Licensing**: Requires active Google Cloud billing with `discoveryengine.googleapis.com` enabled, and an active Gemini Enterprise / Workspace license.
+> - **Pre-created Chat App**: If `agents-cli publish gemini-enterprise --list` returns empty, create an app in Google Cloud Console (*Gemini Enterprise / Agent Builder > Apps > Create App > Chat* in region `global`).
+> - **Permissions**: Ensure your identity has `roles/discoveryengine.editor`, and the Discovery Engine service agent has `roles/aiplatform.user`.
+
 1. List available Gemini Enterprise apps in your project:
 ```bash
 agents-cli publish gemini-enterprise --list
